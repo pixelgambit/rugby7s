@@ -41,25 +41,20 @@ export const FIELD_COLORS = {
     GRASS: '#00BF00',
     OUTER_GRASS: '#009900',
     LINES: '#ffffff',
-    BORDER: '#333333'
-};
-
-// Team colors
-export const TEAM_COLORS = {
-    TEAM1: '#ffffff', // White for Team 1
-    TEAM2: '#808080'  // Gray for Team 2
 };
 
 // Player settings
 export const PLAYER = {
-    RADIUS: 8,  // Player circle radius in pixels
-    DISTANCE_BELOW_HALFWAY: 5 * SCALE, // 5 meters below halfway line
+    RADIUS: 8,
+    DISTANCE_BELOW_HALFWAY: 5 * SCALE,
     TEAM1: {
-        COLOR: TEAM_COLORS.TEAM1,
-        STROKE_COLOR: '#000000' // Black outline to make white players more visible
+        COLOR: '#ffffff',
+        STROKE_COLOR: '#000000'
     },
     TEAM2: {
-        COLOR: TEAM_COLORS.TEAM2,
-        STROKE_COLOR: '#000000' // Black outline for consistency
-    }
+        COLOR: '#808080',
+        STROKE_COLOR: '#000000'
+    },
+    MOVEMENT_SPEED: 0.6,    // Base movement speed
+    SPRINT_SPEED: 0.9       // Sprint movement speed
 };

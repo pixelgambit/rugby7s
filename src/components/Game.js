@@ -1,25 +1,36 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import '../styles/game.css';
 import { 
-    CANVAS_DIMENSIONS, 
+    CANVAS_DIMENSIONS,
+    FIELD_COLORS,
     PLAYER,
-    FIELD_COLORS 
+    TEXT_SETTINGS
 } from '../utils/constants';
 
+const CONTROLLER_MAPPING = {
+    ANALOG_LEFT_X: 0,
+    ANALOG_LEFT_Y: 1,
+    BUTTON_RT: 7,
+};
+
+let frameCount = 0;
+let lastFPSUpdate = 0;
+let currentFPS = 0;
+
 const Game = () => {
-    //=====================================================
-    // 1. COMPONENT SETUP & STATE MANAGEMENT
-    //=====================================================
-    // Canvas reference for drawing
     const canvasRef = useRef(null);
+    const animationFrameId = useRef(null);
+    const [debug, setDebug] = useState({
+        fps: 0,
+        position: { x: 0, y: 0 },
+        speed: 0
+    });
     
-    // Player position state
     const [playerPosition, setPlayerPosition] = useState({
         x: 0,
         y: 0
     });
     
-    // Movement state for tracking active movement directions
     const [movement, setMovement] = useState({
         up: false,
         down: false,
@@ -28,47 +39,30 @@ const Game = () => {
         sprint: false
     });
 
-    //=====================================================
-    // 2. CONTROLLER CONFIGURATION
-    //=====================================================
-    // Reference to store connected gamepad
     const gamepadRef = useRef(null);
+    const DEAD_ZONE = 0.1;
 
-    // Movement speed constants
-    const MOVEMENT_SPEED = 0.6;  // Base movement speed
-    const SPRINT_SPEED = 0.8;    // Sprint movement speed
-    const DEAD_ZONE = 0.1;       // Analog stick dead zone to prevent drift
-
-    // Controller button mapping
-    const CONTROLLER_MAPPING = {
-        ANALOG_LEFT_X: 0,    // Left stick horizontal axis
-        ANALOG_LEFT_Y: 1,    // Left stick vertical axis
-        BUTTON_RT: 7,        // Right trigger for sprint
-    };
-
-    //=====================================================
-    // 3. EVENT HANDLERS (KEYBOARD & CONTROLLER)
-    //=====================================================
-    // Handle gamepad connection
     const handleGamepadConnected = useCallback((e) => {
         console.log("Gamepad connected:", e.gamepad);
         gamepadRef.current = e.gamepad;
     }, []);
 
-    // Handle gamepad disconnection
     const handleGamepadDisconnected = useCallback((e) => {
         console.log("Gamepad disconnected:", e.gamepad);
         gamepadRef.current = null;
     }, []);
 
-    // Process analog stick input with dead zone
     const handleAnalogInput = useCallback((value) => {
         return Math.abs(value) < DEAD_ZONE ? 0 : value;
     }, []);
 
-    // Handle keyboard key press
     const handleKeyDown = useCallback((e) => {
         e.preventDefault();
+        if (e.key === '`') {
+            setDebug(prev => ({ ...prev, show: !prev.show }));
+            return;
+        }
+
         switch(e.key.toLowerCase()) {
             case 'w': setMovement(prev => ({ ...prev, up: true })); break;
             case 's': setMovement(prev => ({ ...prev, down: true })); break;
@@ -79,7 +73,6 @@ const Game = () => {
         }
     }, []);
 
-    // Handle keyboard key release
     const handleKeyUp = useCallback((e) => {
         switch(e.key.toLowerCase()) {
             case 'w': setMovement(prev => ({ ...prev, up: false })); break;
@@ -91,125 +84,127 @@ const Game = () => {
         }
     }, []);
 
-    //=====================================================
-    // 4. PLAYER MOVEMENT & PHYSICS
-    //=====================================================
-    // Update player position based on input
     const updatePlayerPosition = useCallback(() => {
         setPlayerPosition(prev => {
             let newX = prev.x;
             let newY = prev.y;
             let isSprinting = movement.sprint;
+            let currentSpeed = isSprinting ? PLAYER.SPRINT_SPEED : PLAYER.MOVEMENT_SPEED;
+            let dx = 0;
+            let dy = 0;
 
-            // Handle gamepad input
+            // Get all connected gamepads
             const gamepads = navigator.getGamepads();
-            const gamepad = gamepads[0];
+            const gamepad = gamepads[0] || gamepads[1] || gamepads[2] || gamepads[3];
 
+            // Handle gamepad input first
             if (gamepad) {
-                // Process analog stick input
                 const horizontalInput = handleAnalogInput(gamepad.axes[CONTROLLER_MAPPING.ANALOG_LEFT_X]);
                 const verticalInput = handleAnalogInput(gamepad.axes[CONTROLLER_MAPPING.ANALOG_LEFT_Y]);
                 
-                // Apply analog movement
-                if (Math.abs(horizontalInput) > 0) newX += horizontalInput * MOVEMENT_SPEED;
-                if (Math.abs(verticalInput) > 0) newY += verticalInput * MOVEMENT_SPEED;
-
-                // Check controller sprint
-                if (gamepad.buttons[CONTROLLER_MAPPING.BUTTON_RT].pressed) {
-                    isSprinting = true;
-                }
+                isSprinting = movement.sprint || gamepad.buttons[CONTROLLER_MAPPING.BUTTON_RT].pressed;
+                currentSpeed = isSprinting ? PLAYER.SPRINT_SPEED : PLAYER.MOVEMENT_SPEED;
+                
+                dx = horizontalInput;
+                dy = verticalInput;
             }
 
-            // Calculate current movement speed
-            const currentSpeed = isSprinting ? SPRINT_SPEED : MOVEMENT_SPEED;
-            
-            // Apply keyboard movement
-            if (movement.up) newY -= currentSpeed;
-            if (movement.down) newY += currentSpeed;
-            if (movement.left) newX -= currentSpeed;
-            if (movement.right) newX += currentSpeed;
+            // Add keyboard input
+            if (movement.up) dy -= 1;
+            if (movement.down) dy += 1;
+            if (movement.left) dx -= 1;
+            if (movement.right) dx += 1;
 
-            // Apply canvas boundaries
+            // Normalize diagonal movement to prevent faster diagonal speed
+            if (dx !== 0 && dy !== 0) {
+                const magnitude = Math.sqrt(dx * dx + dy * dy);
+                dx = dx / magnitude;
+                dy = dy / magnitude;
+            }
+
+            // Apply speed after normalization
+            newX += dx * currentSpeed;
+            newY += dy * currentSpeed;
+
+            // Apply boundaries
             newX = Math.max(PLAYER.RADIUS, Math.min(newX, CANVAS_DIMENSIONS.WIDTH - PLAYER.RADIUS));
             newY = Math.max(PLAYER.RADIUS, Math.min(newY, CANVAS_DIMENSIONS.HEIGHT - PLAYER.RADIUS));
 
+            setDebug(prev => ({
+                ...prev,
+                position: { x: Math.round(newX), y: Math.round(newY) },
+                speed: currentSpeed
+            }));
+
             return { x: newX, y: newY };
         });
-    }, [movement, handleAnalogInput, CONTROLLER_MAPPING.ANALOG_LEFT_X, CONTROLLER_MAPPING.ANALOG_LEFT_Y, CONTROLLER_MAPPING.BUTTON_RT]);
+    }, [movement, handleAnalogInput]);
 
-    //=====================================================
-    // 5. CANVAS DRAWING & RENDERING
-    //=====================================================
-    // Draw player on canvas
     const drawPlayer = useCallback((ctx) => {
         ctx.beginPath();
-        ctx.fillStyle = PLAYER.TEAM1.COLOR;
-        ctx.strokeStyle = PLAYER.TEAM1.STROKE_COLOR;
-        ctx.lineWidth = 1;
         ctx.arc(playerPosition.x, playerPosition.y, PLAYER.RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = PLAYER.TEAM1.COLOR;
         ctx.fill();
+        ctx.strokeStyle = PLAYER.TEAM1.STROKE_COLOR;
         ctx.stroke();
     }, [playerPosition]);
 
-    //=====================================================
-    // 6. GAME LOOP & ANIMATION
-    //=====================================================
     useEffect(() => {
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
-
-        // Set up gamepad event listeners
-        window.addEventListener("gamepadconnected", handleGamepadConnected);
-        window.addEventListener("gamepaddisconnected", handleGamepadDisconnected);
         
-        // Draw the rugby field and lines
-        const drawField = () => {
-            // Clear previous frame
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        let frameCount = 0;
+        let lastFPSUpdate = 0;
+        let currentFPS = 0;
 
-            // Draw field layers
+        const updateFPS = () => {
+            const now = performance.now();
+            frameCount++;
+            
+            if (now - lastFPSUpdate >= 1000) {
+                setDebug(prev => ({ ...prev, fps: frameCount }));
+                frameCount = 0;
+                lastFPSUpdate = now;
+            }
+        };
+
+        const drawField = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
             ctx.fillStyle = FIELD_COLORS.OUTER_GRASS;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
             ctx.fillStyle = FIELD_COLORS.GRASS;
             ctx.fillRect(50, 50, canvas.width - 100, canvas.height - 100);
             
-            // Set up line properties
             ctx.strokeStyle = FIELD_COLORS.LINES;
             ctx.lineWidth = 2;
             
-            // Draw field boundaries
             ctx.strokeRect(50, 50, canvas.width - 100, canvas.height - 100);
             
-            // Draw field lines
             ctx.beginPath();
             
-            // Try lines
             ctx.moveTo(50, 150);
             ctx.lineTo(canvas.width - 50, 150);
             ctx.moveTo(50, canvas.height - 150);
             ctx.lineTo(canvas.width - 50, canvas.height - 150);
             
-            // 22m lines
             ctx.moveTo(50, 250);
             ctx.lineTo(canvas.width - 50, 250);
             ctx.moveTo(50, canvas.height - 250);
             ctx.lineTo(canvas.width - 50, canvas.height - 250);
             
-            // Halfway line
             const halfwayY = canvas.height / 2;
             ctx.moveTo(50, halfwayY);
             ctx.lineTo(canvas.width - 50, halfwayY);
             
             ctx.stroke();
-
-            // Draw field text
+            
             ctx.fillStyle = FIELD_COLORS.LINES;
-            ctx.font = '16px "Press Start 2P"';
+            ctx.font = TEXT_SETTINGS.FONT;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             
-            // Draw distance markers
             ctx.fillText('50', 25, halfwayY);
             ctx.fillText('50', canvas.width - 25, halfwayY);
             ctx.fillText('22', 25, 250);
@@ -217,62 +212,44 @@ const Game = () => {
             ctx.fillText('22', 25, canvas.height - 250);
             ctx.fillText('22', canvas.width - 25, canvas.height - 250);
 
-            // Set initial player position
             if (playerPosition.x === 0 && playerPosition.y === 0) {
                 setPlayerPosition({
                     x: canvas.width / 2,
-                    y: halfwayY + 50
+                    y: halfwayY + PLAYER.DISTANCE_BELOW_HALFWAY
                 });
             }
 
-            // Draw player
             drawPlayer(ctx);
         };
+        
+        let animationFrameId;
+        
+        const gameLoop = () => {
+            updatePlayerPosition();
+            drawField();
+            updateFPS();
+            animationFrameId = window.requestAnimationFrame(gameLoop);
+        };
 
-        // Set up keyboard event listeners
+        // Start the game loop
+        animationFrameId = window.requestAnimationFrame(gameLoop);
+
+        // Event listeners
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('keyup', handleKeyUp);
+        window.addEventListener("gamepadconnected", handleGamepadConnected);
+        window.addEventListener("gamepaddisconnected", handleGamepadDisconnected);
 
-        // Game loop setup
-        let lastTime = 0;
-        const targetFPS = 60;
-        const frameInterval = 1000 / targetFPS;
-
-        // Main game loop
-        const render = (currentTime) => {
-            const deltaTime = currentTime - lastTime;
-
-            if (deltaTime >= frameInterval) {
-                updatePlayerPosition();
-                drawField();
-                lastTime = currentTime;
-            }
-
-            animationFrameId = window.requestAnimationFrame(render);
-        };
-        
-        let animationFrameId = window.requestAnimationFrame(render);
-
-        //=====================================================
-        // 7. CLEANUP & EVENT MANAGEMENT
-        //=====================================================
         return () => {
-            // Remove event listeners
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
             window.removeEventListener("gamepadconnected", handleGamepadConnected);
             window.removeEventListener("gamepaddisconnected", handleGamepadDisconnected);
-            
-            // Stop animation loop
-            window.cancelAnimationFrame(animationFrameId);
-            
-            // Clear canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            cancelAnimationFrame(animationFrameId);
         };
-    }, [playerPosition, drawPlayer, handleKeyDown, handleKeyUp, updatePlayerPosition, 
-        handleGamepadConnected, handleGamepadDisconnected]);
+    }, [updatePlayerPosition, handleKeyDown, handleKeyUp, 
+        handleGamepadConnected, handleGamepadDisconnected, drawPlayer, playerPosition]);
 
-    // Render canvas element
     return (
         <div className="game-container">
             <canvas 
